@@ -1204,7 +1204,8 @@ int parse_file(struct cpp *cpp, FILE *f, const char *fn, FILE *out) {
 	tokenizer_set_filename(&t, fn);
 	tokenizer_register_marker(&t, MT_MULTILINE_COMMENT_START, "/*"); /**/
 	tokenizer_register_marker(&t, MT_MULTILINE_COMMENT_END, "*/");
-	tokenizer_register_marker(&t, MT_SINGLELINE_COMMENT_START, "//");
+	/* SCUMM single line comments start with ';' */
+	tokenizer_register_marker(&t, MT_SINGLELINE_COMMENT_START, ";");
 	int ret, newline=1, ws_count = 0;
 
 	int if_level = 0, if_level_active = 0, if_level_satisfied = 0;
@@ -1231,13 +1232,37 @@ int parse_file(struct cpp *cpp, FILE *f, const char *fn, FILE *out) {
 			if(!ret) return ret;
 		}
 		if(curr.type == TT_EOF) break;
+		
+		/* See if meets SCUMM include or define, no prepending # */
+		int SCUMM_directive_index = -1;
+		if(curr.type == TT_IDENTIFIER){
+			if (!strcmp("include",t.buf))
+				SCUMM_directive_index = 0;
+			else if (!strcmp("define",t.buf))
+				SCUMM_directive_index = 3;
+		}
+		
 		if(skip_conditional_block && !(newline && is_char(&curr, '#'))) continue;
-		if(is_char(&curr, '#')) {
-			if(!newline) {
+
+		if(is_char(&curr, '#') || SCUMM_directive_index != -1) {
+			int index;
+			int is_char_flag = is_char(&curr, '#');
+			if(is_char_flag && !newline){
 				error("stray #", &t, &curr);
 				return 0;
 			}
-			int index = expect(&t, TT_IDENTIFIER, directives, &curr);
+
+			if (SCUMM_directive_index != -1)
+				index = SCUMM_directive_index;
+			else
+				index = expect(&t, TT_IDENTIFIER, directives, &curr);
+
+			/* Error wrong definitions i.e. where prepending # is forbidden */
+			if ( is_char_flag && (index == 0 || index == 3)){
+				error("These SCUMM directives do not prepend '#' !!!", &t, &curr);
+				return 0;
+			}
+			
 			if(index == -1) {
 				if(skip_conditional_block) continue;
 				error("invalid preprocessing directive", &t, &curr);
